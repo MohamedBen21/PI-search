@@ -69,7 +69,7 @@ body { position: fixed; inset: 0; }
 
 .mode { display: inline-flex; flex: none; height: 40px; padding: 3px; gap: 2px; border-radius: 10px; border: 1px solid var(--line);
   background: #0c0c0c; color: var(--dim); font: inherit; cursor: pointer; }
-.mode .seg { display: inline-flex; align-items: center; justify-content: center; min-width: 44px; padding: 0 8px; border-radius: 7px;
+.mode .seg { appearance: none; border: 0; background: none; color: inherit; font: inherit; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; min-width: 44px; padding: 0 8px; border-radius: 7px;
   font-size: 13px; font-weight: 700; letter-spacing: .06em; transition: background .2s, color .2s; }
 .mode .seg.on { background: var(--fg); color: #000; }
 .mode:hover { border-color: rgba(255,255,255,.4); }
@@ -103,3 +103,26 @@ body { position: fixed; inset: 0; }
   #q { font-size: 18px; letter-spacing: .08em; }
 }
 @media (prefers-reduced-motion: reduce) { #bar.busy::after { animation: none; } }
+
+/* ---- colors mode ---- */
+.mode .seg.col { min-width: 40px; }
+.mini { display: grid; grid-template-columns: 8px 8px; gap: 2px; }
+.mini i { width: 8px; height: 8px; border-radius: 2px; display: block; }
+.mini i:nth-child(1) { background: #ff3b30; } .mini i:nth-child(2) { background: #ffd60a; }
+.mini i:nth-child(3) { background: #0a84ff; } .mini i:nth-child(4) { background: #34c759; }
+
+#palette { display: flex; gap: 5px; width: min(760px, 100%); padding: 0 2px; }
+#palette[hidden] { display: none; }
+#palette .chip { flex: 1; min-width: 0; height: 32px; border: 0; border-radius: 8px; font: inherit; font-size: 13px; font-weight: 700;
+  cursor: pointer; box-shadow: 0 0 0 1px rgba(255,255,255,.12) inset; transition: transform .08s; }
+#palette .chip:hover { transform: translateY(-2px); }
+#palette .chip:active { transform: scale(.94); }
+#palette .chip.pal { flex: 0 0 40px; background: #161616; color: var(--fg); font-size: 16px; box-shadow: 0 0 0 1px var(--line) inset; }
+.sw { display: inline-block; width: .85em; height: .85em; border-radius: 2px; margin-right: 2px; vertical-align: -1px; }
+
+@media (max-width: 760px) {
+  .mode .seg { min-width: 30px; padding: 0 4px; }
+  .mode .seg.col { min-width: 32px; }
+  #palette .chip { height: 28px; font-size: 12px; }
+  #palette .chip.pal { flex-basis: 30px; }
+}

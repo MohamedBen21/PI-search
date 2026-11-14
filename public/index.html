@@ -36,10 +36,15 @@
 
 <div id="dock">
   <div id="status" role="status" aria-live="polite"></div>
+  <div id="palette" hidden aria-label="Color legend: tap a color to add its digit to the search"></div>
   <form id="bar" autocomplete="off">
-    <button type="button" id="modeBtn" class="mode" title="Switch between numbers and letters" aria-label="Switch between numbers and letters">
-      <span class="seg on" data-m="digits">123</span><span class="seg" data-m="letters">ABC</span>
-    </button>
+    <div id="modeBtn" class="mode" role="group" aria-label="Display mode">
+      <button type="button" class="seg on" data-m="digits" title="Numbers" aria-label="Numbers">123</button>
+      <button type="button" class="seg" data-m="letters" title="Letters" aria-label="Letters">ABC</button>
+      <button type="button" class="seg col" data-m="colors" title="Colors (pi as an image)" aria-label="Colors">
+        <span class="mini"><i></i><i></i><i></i><i></i></span>
+      </button>
+    </div>
     <input id="q" type="text" inputmode="numeric" placeholder="Type a sequence, e.g. 14159" maxlength="32"
            autocapitalize="off" autocorrect="off" spellcheck="false" aria-label="Sequence to search">
     <button type="button" id="nextBtn" class="next" hidden><span class="lbl">NEXT </span>›</button>

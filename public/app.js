@@ -1,17 +1,18 @@
 (() => {
 'use strict';
 
-const BLOCK = 2048;           
-const MIN_SEARCH_MS = 1100;    
+/* ───────────────────────── config ───────────────────────── */
+const BLOCK = 2048;            // digits fetched per request (cached in the browser)
+const MIN_SEARCH_MS = 1100;    // minimum time the "searching" animation/sound plays, so you can hear it
 const FAM = '"JetBrains Mono", ui-monospace, Menlo, Consolas, monospace';
-const MAX_DIGITS = 32;         
+const MAX_DIGITS = 32;         // longest sequence (letters mode: 16 letters)
 
 const $ = (s) => document.querySelector(s);
 const el = {
   canvas: $('#grid'), form: $('#bar'), q: $('#q'), status: $('#status'), modeBtn: $('#modeBtn'),
   next: $('#nextBtn'), go: $('#goBtn'), total: $('#total'), range: $('#range'),
   rail: $('#rail'), thumb: $('#thumb'), goto: $('#goto'), mute: $('#mute'),
-  waves: $('#waves'), slash: $('#slash'),
+  waves: $('#waves'), slash: $('#slash'), palette: $('#palette'),
 };
 const ctx = el.canvas.getContext('2d', { alpha: false });
 const fmt = (n) => Math.round(n).toLocaleString('en-US');
@@ -21,35 +22,41 @@ const store = {
   set(k, v) { try { localStorage.setItem(k, v); } catch { /* ignore */ } },
 };
 
-
+/* ───────────────────────── state ───────────────────────── */
 const S = {
   N: 0, mode: 'digits', fs: Number(store.get('pi-fs')) || (innerWidth < 600 ? 22 : 28),
+  fsC: Number(store.get('pi-fsc')) || 26,      // zoom level used in colors mode (cell = fsC / 2 px)
+  pal: Number(store.get('pi-pal')) || 0,       // palette index
   top: 0, vel: 0, anim: null,
-  match: null,           
-  last: null,            
+  match: null,           // {s, e} digit range [s, e)
+  last: null,            // last successful search {digits, mode, raw}
   searching: false, pulseT0: -1e9,
 };
 let W = 0, H = 0, dpr = 1, cellW = 20, cellH = 40, cols = 10, dpc = 1, digitsPerRow = 10, rowsVis = 20, originX = 0, gutter = 0;
 
-
-const TOP_PAD = 74;                                  
+/* ───────────────────────── layout ───────────────────────── */
+const TOP_PAD = 74;                                   // px kept free under the HUD so row 0 (with the "3.") is visible
 function minTop() { return -TOP_PAD / cellH; }
 function maxTop() { return Math.max(0, Math.ceil(S.N / digitsPerRow) - 3); }
 function clampTop(v) { return Math.min(Math.max(minTop(), v), maxTop()); }
 
 function layout() {
-  const anchorDigit = S.top * digitsPerRow;             
+  const anchorDigit = S.top * digitsPerRow;             // keep the same place on screen when the grid changes
   W = innerWidth; H = innerHeight; dpr = Math.min(window.devicePixelRatio || 1, 3);
   el.canvas.width = Math.round(W * dpr); el.canvas.height = Math.round(H * dpr);
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
   const fs = S.fs;
   ctx.font = `400 ${fs}px ${FAM}`;
-  const dW = Math.round(ctx.measureText('0').width * 1.38);       
-
-  cellH = Math.round(fs * 1.85);
-  dpc = S.mode === 'letters' ? 2 : 1;
-  cellW = S.mode === 'letters' ? Math.round(dW * 1.55) : dW;
+  const dW = Math.round(ctx.measureText('0').width * 1.38);       // digit cell width (a bit of tracking)
+  if (S.mode === 'colors') {
+    const sz = Math.max(4, Math.round(S.fsC * 0.5));          // square "pixels"
+    cellH = sz; cellW = sz; dpc = 1;
+  } else {
+    cellH = Math.round(fs * 1.85);
+    dpc = S.mode === 'letters' ? 2 : 1;
+    cellW = S.mode === 'letters' ? Math.round(dW * 1.55) : dW;
+  }
   gutter = W > 760 ? 128 : Math.round(dW * 1.9);
   const avail = W - gutter - 34;
   cols = Math.max(3, Math.floor(avail / cellW));
@@ -60,9 +67,9 @@ function layout() {
   dirty();
 }
 
-
-const blocks = new Map();     
-const pending = new Map();    
+/* ───────────────────────── digit cache ───────────────────────── */
+const blocks = new Map();     // blockIndex -> string of digits
+const pending = new Map();    // blockIndex -> AbortController
 
 function ensure(first, last) {
   const b0 = Math.max(0, Math.floor(first / BLOCK));
@@ -100,13 +107,13 @@ function slice(start, len) {
     const bi = Math.floor(p / BLOCK), off = p - bi * BLOCK, take = Math.min(BLOCK - off, end - p);
     const b = blocks.get(bi);
     let part = b !== undefined ? b.substr(off, take) : '';
-    if (part.length < take) part += ' '.repeat(take - part.length);   
+    if (part.length < take) part += ' '.repeat(take - part.length);   // not loaded yet
     out += part; p += take;
   }
   return out;
 }
 
-
+/* ───────────────────────── rendering ───────────────────────── */
 let raf = 0, lastT = 0;
 function dirty() { if (!raf) raf = requestAnimationFrame(frame); }
 
@@ -136,6 +143,7 @@ function frame(now) {
 }
 
 function draw(now) {
+  if (S.mode === 'colors') return drawColors(now);
   ctx.fillStyle = '#000';
   ctx.fillRect(0, 0, W, H);
   const r0 = Math.floor(S.top), off = (S.top - r0) * cellH;
@@ -156,6 +164,7 @@ function draw(now) {
     const y = r * cellH - off + cellH / 2;
     const str = slice(base, digitsPerRow);
 
+    // left gutter: index of the first cell in this row (or the "3." of pi on the very first row)
     ctx.textAlign = 'right';
     if (row === 0) {
       ctx.font = `700 ${fs}px ${FAM}`; ctx.fillStyle = '#fff';
@@ -192,7 +201,7 @@ function draw(now) {
     }
   }
 
-
+  // scanning effect (while a search is running)
   if (S.searching) {
     ctx.fillStyle = '#ffb830';
     for (let i = 0; i < flick.length; i += 4) {
@@ -206,7 +215,7 @@ function draw(now) {
     ctx.fillStyle = 'rgba(255,214,10,.7)'; ctx.fillRect(0, scanY, W, 1);
   }
 
-
+  // matched sequence: yellow, bold, glowing
   if (hits.length) {
     ctx.fillStyle = 'rgba(255,214,10,.13)';
     for (let i = 0; i < hits.length; i += 3) ctx.fillRect(hits[i] - cellW / 2, hits[i + 1] - cellH / 2 + 3, cellW, cellH - 6);
@@ -216,6 +225,84 @@ function draw(now) {
     ctx.shadowBlur = 10 + pulse * 16;
     for (let i = 0; i < hits.length; i += 3) ctx.fillText(hits[i + 2] === ' ' ? '·' : hits[i + 2], hits[i], hits[i + 1]);
     ctx.shadowBlur = 0;
+  }
+}
+
+/* ───────────── colors mode: every digit is a colored square, pi becomes a picture ───────────── */
+const PALETTES = [
+  { name: 'Vivid', c: ['#4a4a4a', '#ff3b30', '#ff9500', '#ffd60a', '#34c759', '#00c7be', '#0a84ff', '#5e5ce6', '#bf5af2', '#ff2d92'],
+    t: ['#fff', '#fff', '#000', '#000', '#000', '#000', '#fff', '#fff', '#fff', '#fff'] },
+  { name: 'Rainbow', c: Array.from({ length: 10 }, (_, i) => `hsl(${i * 34},90%,55%)`),
+    t: ['#fff', '#000', '#000', '#000', '#000', '#000', '#000', '#fff', '#fff', '#fff'] },
+  { name: 'Grayscale', frame: '#ffd60a', c: Array.from({ length: 10 }, (_, i) => `hsl(0,0%,${Math.round(8 + i * (92 / 9))}%)`),
+    t: ['#fff', '#fff', '#fff', '#fff', '#fff', '#000', '#000', '#000', '#000', '#000'] },
+];
+const curPal = () => PALETTES[S.pal % PALETTES.length];
+
+function drawColors(now) {
+  ctx.fillStyle = '#000';
+  ctx.fillRect(0, 0, W, H);
+  const r0 = Math.floor(S.top), off = (S.top - r0) * cellH;
+  const firstD = Math.max(0, r0) * digitsPerRow, lastD = (r0 + rowsVis) * digitsPerRow;
+  ensure(firstD, lastD);
+
+  const colors = curPal().c, size = cellW, gap = size >= 10 ? 1 : 0, s = size - gap;
+  const m = S.match;
+  const dim = !!m && m.e > firstD && m.s < lastD && !S.searching;      // fade the picture so the match pops
+  const scanY = S.searching ? ((now / 1100) % 1) * (H + 240) - 120 : -9999;
+  const pulse = now - S.pulseT0 < 2500 ? 0.5 + 0.5 * Math.sin(now / 170) : 0;
+  const every = Math.max(1, Math.ceil(14 / cellH));
+  const buckets = Array.from({ length: 10 }, () => []), hits = [], flick = [];
+
+  ctx.textBaseline = 'middle'; ctx.textAlign = 'right';
+  for (let r = 0; r < rowsVis; r++) {
+    const row = r0 + r, base = row * digitsPerRow;
+    if (row < 0) continue;
+    if (base >= S.N) break;
+    const y = r * cellH - off;
+    if (y < -cellH || y > H) continue;
+    const str = slice(base, digitsPerRow);
+
+    if (row === 0) { ctx.font = `700 12px ${FAM}`; ctx.fillStyle = '#fff'; ctx.fillText('3.', originX - cellW / 2 - 4, y + cellH / 2); }
+    else if (W > 760 && row % every === 0) { ctx.font = `400 11px ${FAM}`; ctx.fillStyle = '#505050'; ctx.fillText(fmt(base + 1), gutter - 14, y + cellH / 2); }
+
+    const inBand = Math.abs(y - scanY) < 46;
+    for (let c = 0; c < cols; c++) {
+      const d = base + c;
+      if (d >= S.N) break;
+      const code = str.charCodeAt(c) - 48;
+      if (!(code >= 0 && code <= 9)) continue;                      // slice not loaded yet
+      const x = originX + c * cellW - cellW / 2;
+      if (m && d >= m.s && d < m.e) { hits.push(x, y, code); continue; }
+      if (S.searching && inBand) { flick.push(x, y, (Math.random() * 10) | 0); continue; }
+      buckets[code].push(x, y);
+    }
+  }
+
+  ctx.globalAlpha = dim ? 0.2 : 1;
+  for (let d = 0; d < 10; d++) {
+    const b = buckets[d];
+    if (!b.length) continue;
+    ctx.fillStyle = colors[d];
+    for (let i = 0; i < b.length; i += 2) ctx.fillRect(b[i], b[i + 1], s, s);
+  }
+  ctx.globalAlpha = 1;
+
+  if (S.searching) {                                               // scanning band of random colors
+    for (let i = 0; i < flick.length; i += 3) { ctx.fillStyle = colors[flick[i + 2]]; ctx.fillRect(flick[i], flick[i + 1], s, s); }
+    const g = ctx.createLinearGradient(0, scanY - 60, 0, scanY + 2);
+    g.addColorStop(0, 'rgba(255,255,255,0)'); g.addColorStop(1, 'rgba(255,255,255,.16)');
+    ctx.fillStyle = g; ctx.fillRect(0, scanY - 60, W, 62);
+    ctx.fillStyle = 'rgba(255,255,255,.7)'; ctx.fillRect(0, scanY, W, 1);
+  }
+
+  if (hits.length) {                                               // match: white glowing frame + full-strength colors
+    const inf = Math.max(2, Math.round(size * 0.2));
+    const frame = curPal().frame || '#fff';
+    ctx.fillStyle = frame; ctx.shadowColor = frame; ctx.shadowBlur = 10 + pulse * 16;
+    for (let i = 0; i < hits.length; i += 3) ctx.fillRect(hits[i] - inf, hits[i + 1] - inf, size + 2 * inf, size + 2 * inf);
+    ctx.shadowBlur = 0;
+    for (let i = 0; i < hits.length; i += 3) { ctx.fillStyle = colors[hits[i + 2]]; ctx.fillRect(hits[i], hits[i + 1], s, s); }
   }
 }
 
@@ -229,10 +316,10 @@ function updateHud() {
   el.thumb.style.transform = `translateY(${(f * room).toFixed(1)}px)`;
 }
 
-
+/* ───────────────────────── navigation ───────────────────────── */
 function viewTopFor(d) {
   const row = Math.floor(d / digitsPerRow);
-  const centerY = 70 + (H - 70 - 190) / 2;                
+  const centerY = 70 + (H - 70 - (S.mode === 'colors' ? 236 : 190)) / 2;                // middle of the free area between HUD and search bar
   return clampTop(row - (centerY - cellH / 2) / cellH);
 }
 
@@ -251,8 +338,9 @@ function jump(d) {
 }
 
 function zoom(dir) {
-  S.fs = Math.min(84, Math.max(12, Math.round(S.fs * (dir > 0 ? 1.12 : 1 / 1.12))));
-  store.set('pi-fs', String(S.fs));
+  const key = S.mode === 'colors' ? 'fsC' : 'fs', lo = S.mode === 'colors' ? 8 : 12;
+  S[key] = Math.min(84, Math.max(lo, Math.round(S[key] * (dir > 0 ? 1.12 : 1 / 1.12))));
+  store.set(key === 'fsC' ? 'pi-fsc' : 'pi-fs', String(S[key]));
   layout();
 }
 
@@ -267,7 +355,7 @@ el.canvas.addEventListener('wheel', (e) => {
 }, { passive: false });
 let zoomAcc = 0;
 
-
+// drag / touch scrolling with inertia
 let drag = null;
 el.canvas.addEventListener('pointerdown', (e) => {
   el.canvas.setPointerCapture(e.pointerId);
@@ -289,7 +377,7 @@ const endDrag = () => {
 el.canvas.addEventListener('pointerup', endDrag);
 el.canvas.addEventListener('pointercancel', endDrag);
 
-
+// scrub rail (fast travel through the whole file)
 function railSet(e) {
   const r = el.rail.getBoundingClientRect();
   const f = Math.min(1, Math.max(0, (e.clientY - r.top - 13) / Math.max(1, r.height - 26)));
@@ -325,9 +413,9 @@ el.goto.addEventListener('keydown', (e) => {
 $('#zoomIn').addEventListener('click', () => zoom(1));
 $('#zoomOut').addEventListener('click', () => zoom(-1));
 
-
+/* ───────────────────────── digits <-> letters ───────────────────────── */
 const lettersToDigits = (s) => [...s.toLowerCase()].map((c) => String(c.charCodeAt(0) - 96).padStart(2, '0')).join('');
-const pairLetter = (n) => String.fromCharCode(97 + ((n + 99) % 100) % 26);  
+const pairLetter = (n) => String.fromCharCode(97 + ((n + 99) % 100) % 26);   // same repeating alphabet as the grid
 function digitsToLetters(s) {
   let out = '';
   for (let i = 0; i + 1 < s.length; i += 2) out += pairLetter(+s.slice(i, i + 2));
@@ -336,8 +424,9 @@ function digitsToLetters(s) {
 
 function setMode(m) {
   if (m === S.mode) return;
+  const kind = (x) => (x === 'letters' ? 'letters' : 'digits');          // colors uses digits as its input
   const v = el.q.value;
-  el.q.value = m === 'letters' ? digitsToLetters(v) : lettersToDigits(v);
+  if (kind(m) !== kind(S.mode)) el.q.value = m === 'letters' ? digitsToLetters(v) : lettersToDigits(v);
   S.mode = m;
   applyModeUi();
   layout();
@@ -345,15 +434,32 @@ function setMode(m) {
 }
 
 function applyModeUi() {
-  const letters = S.mode === 'letters';
+  const letters = S.mode === 'letters', colors = S.mode === 'colors';
   el.modeBtn.querySelectorAll('.seg').forEach((s) => s.classList.toggle('on', s.dataset.m === S.mode));
   el.q.classList.toggle('letters', letters);
   el.q.inputMode = letters ? 'text' : 'numeric';
   el.q.maxLength = letters ? MAX_DIGITS / 2 : MAX_DIGITS;
-  el.q.placeholder = letters ? 'Type a word, e.g. cat   (a=01 … z=26, then 27=a again …)' : 'Type a sequence, e.g. 14159';
+  el.q.placeholder = letters ? 'Type a word, e.g. cat   (a=01 … z=26, then 27=a again …)'
+    : colors ? 'Type digits, or tap the colors above' : 'Type a sequence, e.g. 14159';
+  el.palette.hidden = !colors;
 }
 
-el.modeBtn.addEventListener('click', () => setMode(S.mode === 'digits' ? 'letters' : 'digits'));
+el.modeBtn.addEventListener('click', (e) => { const b = e.target.closest('.seg'); if (b) setMode(b.dataset.m); });
+
+function buildPalette() {
+  const P = curPal();
+  el.palette.innerHTML = P.c.map((c, i) =>
+    `<button type="button" class="chip" data-d="${i}" style="background:${c};color:${P.t[i]}" title="Add ${i} to the search">${i}</button>`).join('')
+    + `<button type="button" class="chip pal" title="Palette: ${P.name} (click for the next one)" aria-label="Change palette">◐</button>`;
+}
+el.palette.addEventListener('click', (e) => {
+  const b = e.target.closest('button');
+  if (!b) return;
+  if (b.classList.contains('pal')) { S.pal = (S.pal + 1) % PALETTES.length; store.set('pi-pal', String(S.pal)); buildPalette(); dirty(); return; }
+  if (el.q.value.length < MAX_DIGITS) { el.q.value += b.dataset.d; Snd.click(); }
+});
+const swatches = (digits) => [...digits].map((d) => `<i class="sw" style="background:${curPal().c[+d]}"></i>`).join('');
+
 el.q.addEventListener('input', () => {
   el.q.value = S.mode === 'letters' ? el.q.value.replace(/[^a-zA-Z]/g, '').toLowerCase() : el.q.value.replace(/\D/g, '');
 });
@@ -388,7 +494,7 @@ async function runSearch({ mode, raw, from = 0, wrap = false, next = false }) {
 
   if (failed) { Snd.fail(); setStatus('The server is busy or unreachable — try again.', true); dirty(); return; }
 
-  const label = esc(mode === 'letters' ? raw.toUpperCase() : raw);
+  const label = mode === 'colors' ? `${swatches(raw)} ${esc(raw)}` : esc(mode === 'letters' ? raw.toUpperCase() : raw);
   if (res.found) {
     if (next && S.match && res.index === S.match.s) {
       Snd.found(); setStatus(`<b>${label}</b> appears only once in the first ${fmt(res.total)} digits`); dirty(); return;
@@ -423,7 +529,7 @@ el.next.addEventListener('click', () => {
   runSearch({ ...S.last, from: S.match.s + 1, wrap: true, next: true });
 });
 
-
+/* ───────────────────────── sound (Web Audio, synthesised — no files) ───────────────────────── */
 const Snd = (() => {
   const AC = window.AudioContext || window.webkitAudioContext;
   let ac = null, master = null, timer = 0, muted = store.get('pi-muted') === '1';
@@ -448,7 +554,7 @@ const Snd = (() => {
   }
   const scale = [523.25, 587.33, 659.25, 783.99, 880, 1046.5, 1174.66, 1318.51];
 
-  function startSearch() {                    
+  function startSearch() {                    // digital "data stream" blips + a rising sweep
     stopSearch(); if (!ac || muted) return;
     let i = 0;
     const tick = () => {
@@ -462,12 +568,12 @@ const Snd = (() => {
   }
   function stopSearch() { if (timer) clearInterval(timer); timer = 0; }
 
-  function found() {                        
+  function found() {                          // bright rising arpeggio + shimmer
     const n = [659.25, 830.61, 987.77, 1318.51];
     n.forEach((f, i) => { tone({ f, t: i * 0.075, d: 0.4, type: 'triangle', g: 0.17 }); tone({ f: f * 2, t: i * 0.075, d: 0.25, type: 'sine', g: 0.05 }); });
     tone({ f: 1318.51, t: 0.34, d: 0.8, type: 'sine', g: 0.12 }); tone({ f: 1661.22, t: 0.34, d: 0.8, type: 'sine', g: 0.07 });
   }
-  function fail() {                           
+  function fail() {                           // low descending "nope"
     tone({ f: 196, f2: 92, d: 0.38, type: 'sawtooth', g: 0.13 });
     tone({ f: 155.56, f2: 73, t: 0.2, d: 0.5, type: 'sawtooth', g: 0.13 });
     tone({ f: 98, t: 0.2, d: 0.7, type: 'square', g: 0.04 });
@@ -484,11 +590,12 @@ const Snd = (() => {
   return { unlock, startSearch, stopSearch, found, fail, click };
 })();
 
-
+/* ───────────────────────── boot ───────────────────────── */
 let rz = 0;
 window.addEventListener('resize', () => { clearTimeout(rz); rz = setTimeout(layout, 80); });
 
 (async function init() {
+  buildPalette();
   applyModeUi();
   try {
     const info = await (await fetch('/api/info')).json();
