@@ -3,7 +3,9 @@ const fs = require('fs');
 const path = require('path');
 
 const PORT = Number(process.env.PORT) || 3000;
-const FILE = path.resolve(process.env.PI_FILE || path.join(__dirname, 'data', 'pi.txt'));
+const DATA = path.join(__dirname, 'data');
+const CANDIDATES = [path.join(DATA, 'pi.txt'), path.join(DATA, 'pi-1.txt')];   // full file first, 30M demo second
+const FILE = path.resolve(process.env.PI_FILE || CANDIDATES.find((f) => fs.existsSync(f)) || CANDIDATES[0]);
 const PUBLIC = path.join(__dirname, 'public');
 const MAX_SLICE = 20000;     
 const MAX_NEEDLE = 64;       

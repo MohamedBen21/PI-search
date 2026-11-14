@@ -25,8 +25,9 @@ git clone https://github.com/MohamedBen21/PI-search.git
 cd PI-search
 mkdir data            # skip if the folder already exists
 ```
+The repository includes `data/pi-1.txt`, the first 30 million digits of pi, so the site works right after cloning. If `data/pi.txt` exists, the server uses it instead, so the larger file only needs to be added for deeper searches.
 
-Then add the digits file as described below, and start the server:
+If you want the 750 million numbers then add the digits file as described below, and start the server:
 
 ```bash
 node server.js
